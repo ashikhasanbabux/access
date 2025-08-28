@@ -6,8 +6,13 @@ import requests
 import my_pb2
 import output_pb2
 import jwt
+import logging
 
 app = Flask(__name__)
+
+# Configure logging
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 AES_KEY = b'Yg&tc%DEuh6%Zc^8'
 AES_IV = b'6oyZDr22E3ychjM%'
@@ -104,7 +109,8 @@ def try_platforms(access_token, open_id):
                             }
                     except ValueError:
                         continue
-        except requests.RequestException:
+        except requests.RequestException as e:
+            logger.error(f"Request to MajorLogin failed for platform {platform_name}: {str(e)}")
             continue
     return None
 
@@ -132,6 +138,7 @@ def guest():
 
     try:
         oauth_response = requests.post(oauth_url, data=payload, headers=headers, timeout=5)
+        logger.debug(f"OAuth response status: {oauth_response.status_code}, content: {oauth_response.text}")
         if oauth_response.status_code != 200:
             try:
                 return jsonify(oauth_response.json()), oauth_response.status_code
@@ -150,6 +157,7 @@ def guest():
         return jsonify({"message": "No valid token found for any platform"}), 500
 
     except requests.RequestException as e:
+        logger.error(f"OAuth request failed: {str(e)}")
         return jsonify({"message": str(e)}), 500
 
 @app.route('/main', methods=['GET'])
@@ -178,9 +186,16 @@ def main():
             "user-agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
         }
         uid_res = requests.get(uid_url, headers=uid_headers)
-        uid_data = uid_res.json()
+        logger.debug(f"UID response status: {uid_res.status_code}, content: {uid_res.text}")
+        try:
+            uid_data = uid_res.json()
+        except ValueError:
+            logger.error(f"UID response is not JSON: {uid_res.text}")
+            return jsonify({"message": "Invalid JSON response from inspect_token"}), 500
+
         uid = uid_data.get("uid")
         if not uid:
+            logger.error(f"No UID found in response: {uid_data}")
             return jsonify({"message": "Failed to extract UID"}), 400
 
         openid_url = "https://shop2game.com/api/auth/player_id_login"
@@ -200,9 +215,16 @@ def main():
         }
         payload = {"app_id": 100067, "login_id": str(uid)}
         openid_res = requests.post(openid_url, headers=openid_headers, json=payload)
-        openid_data = openid_res.json()
+        logger.debug(f"OpenID response status: {openid_res.status_code}, content: {openid_res.text}")
+        try:
+            openid_data = openid_res.json()
+        except ValueError:
+            logger.error(f"OpenID response is not JSON: {openid_res.text}")
+            return jsonify({"message": "Invalid JSON response from player_id_login"}), 500
+
         open_id = openid_data.get("open_id")
         if not open_id:
+            logger.error(f"No open_id found in response: {openid_data}")
             return jsonify({"message": "Failed to extract open_id"}), 500
 
         result = try_platforms(access_token, open_id)
@@ -211,7 +233,8 @@ def main():
         return jsonify({"message": "No valid token found for any platform"}), 500
 
     except requests.RequestException as e:
+        logger.error(f"Request failed: {str(e)}")
         return jsonify({"message": str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=1080, debug=False)
+    app.run(host='0.0.0.0', port=1080, debug=True)
